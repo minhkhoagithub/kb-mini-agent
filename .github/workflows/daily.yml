@@ -1,0 +1,51 @@
+name: Daily KB Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Build Docker image
+        run: docker build -t kb-mini-agent .
+
+      - name: Run scraper uploader in Docker
+        run: |
+          docker run --rm \
+            -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            -e GEMINI_FILE_SEARCH_STORE_NAME="${{ secrets.GEMINI_FILE_SEARCH_STORE_NAME }}" \
+            -e GEMINI_MODEL="gemini-2.5-flash-lite" \
+            -e MAX_ARTICLES="30" \
+            -e SUPPORT_ARTICLES_URL="https://support.optisigns.com/api/v2/help_center/en-us/articles.json?per_page=100" \
+            -e FILE_SEARCH_STORE_DISPLAY_NAME="alpha_support_knowledge_base" \
+            -e UPLOAD_TO_GEMINI="true" \
+            -e CHUNK_SIZE_TOKENS="512" \
+            -e CHUNK_OVERLAP_TOKENS="100" \
+            -v "${{ github.workspace }}:/app" \
+            kb-mini-agent
+
+      - name: Upload last run log as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: last-run-log
+          path: logs/last_run.json
+
+      - name: Commit updated markdown, state, and logs
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add data/markdown state logs
+          git diff --staged --quiet || git commit -m "chore: update daily kb sync"
+          git push
